@@ -39,6 +39,7 @@ RUN apk add openjdk8 \
     && apk add maven \
     && apk add wget \
     && apk add vim \
+    && apk add curl \
     && apk add bash
 
 ENV JAVA_HOME=/usr/lib/jvm/java-1.8-openjdk
@@ -47,13 +48,13 @@ ENV PATH $JAVA_HOME/bin:$PATH
 ENV PATH $MAVEN_HOME/bin:$PATH
 
 
-
 RUN wget "https://nodejs.org/dist/v$NODE_VERSION/node-v$NODE_VERSION-linux-x64.tar.gz" \
     && tar zxvf "node-v$NODE_VERSION-linux-x64.tar.gz" -C /usr/local --strip-components=1 \
     && rm "node-v$NODE_VERSION-linux-x64.tar.gz" \
     && ln -s /usr/local/bin/node /usr/local/bin/nodejs
 
-RUN mkdir -p ~/.kube \
-    && cat plugins/config >> ~/.kube/config
+RUN curl -L https://storage.googleapis.com/kubernetes-release/release/v1.11.1/bin/linux/amd64/kubectl -o /usr/local/bin/kubectl \
+  && chmod +x /usr/local/bin/kubectl
 
 EXPOSE 10000
+ENTRYPOINT bash bin/startup.sh
