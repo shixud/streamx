@@ -219,7 +219,7 @@
 
       <div slot="extra">
         <a-input-group compact>
-          <a-select placeholder="Type" allowClear @change="handleChangeJobType" style="width: 80px">
+          <a-select placeholder="Type" allowClear @change="handleChangeJobType" style="width: 90px">
             <a-select-option value="1">JAR</a-select-option>
             <a-select-option value="2">SQL</a-select-option>
           </a-select>
@@ -453,6 +453,7 @@
               title="Are you sure delete this job ?"
               cancel-text="No"
               ok-text="Yes"
+              v-permit="'app:delete'"
               @confirm="handleDelete(record)">
               <a-button
                 type="danger"
@@ -1111,12 +1112,8 @@ export default {
       } , {
         title: 'Application Name',
         dataIndex: 'jobName',
-        width: 300,
+        width: 320,
         scopedSlots: {customRender: 'jobName'},
-      }, {
-        title: 'Flink Version',
-        dataIndex: 'flinkVersion',
-        width: 120
       }, {
         title: 'Owner',
         dataIndex: 'nickName',
@@ -1124,23 +1121,18 @@ export default {
       }, {
         title: 'Run Status',
         dataIndex: 'state',
-        width: 130,
+        width: 120,
         scopedSlots: {customRender: 'state'},
         filters: [
           {text: 'ADDED', value: 0},
-          {text: 'DEPLOYING', value: 1},
-          {text: 'DEPLOYED', value: 2},
-          {text: 'CREATED', value: 4},
-          {text: 'STARTING', value: 5},
-          {text: 'RUNNING', value: 7},
-          {text: 'FAILED', value: 9},
-          {text: 'CANCELED', value: 11},
-          {text: 'FINISHED', value: 12},
-          {text: 'SUSPENDED', value: 13},
-          {text: 'LOST', value: 15},
-          {text: 'SILENT', value: 19},
-          {text: 'TERMINATED', value: 20},
-          {text: 'FINISHED', value: 21},
+          {text: 'STARTING', value: 3},
+          {text: 'RUNNING', value: 5},
+          {text: 'FAILED', value: 6},
+          {text: 'CANCELED', value: 9},
+          {text: 'FINISHED', value: 10},
+          {text: 'LOST', value: 13},
+          {text: 'SILENT', value: 17},
+          {text: 'TERMINATED', value: 18}
         ]
       }, {
         title: 'Launch | Build',
@@ -1159,14 +1151,14 @@ export default {
         dataIndex: 'modifyTime',
         sorter: true,
         sortOrder: sortedInfo.columnKey === 'modifyTime' && sortedInfo.order,
-        width: 180
+        width: 170
       }, {
         dataIndex: 'operation',
         key: 'operation',
         fixed: 'right',
         scopedSlots: {customRender: 'operation'},
         slots: {title: 'customOperation'},
-        width: 220
+        width: 200
       }]
     }
   },
@@ -1220,18 +1212,6 @@ export default {
 
     handleChangeJobType(jobType) {
       this.jobType = jobType
-      this.handleSearch()
-    },
-
-    handleCopySuccess() {
-      notification.success({
-        message: 'current jobId copied to clipboard Successfully',
-        duration: 1,
-      })
-    },
-
-    handleChangeJobType(jobType) {
-      this.jobType = jobType == 3 ? null : jobType
       this.handleSearch()
     },
 

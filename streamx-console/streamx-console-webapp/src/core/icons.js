@@ -7,6 +7,7 @@
  * 所有图标均从这里加载，方便管理
  */
 import alarm from '@/assets/icons/alarm.svg?inline'
+import testalarm from '@/assets/icons/testalarm.svg?inline'
 import analyse from '@/assets/icons/analyse.svg' // path to your '*.svg?inline' file.
 import flink from '@/assets/icons/flink.svg?inline'
 import spark from '@/assets/icons/spark.svg?inline'
@@ -20,7 +21,7 @@ import deploy from '@/assets/icons/deploy.svg?inline'
 import stream from '@/assets/icons/stream.svg?inline'
 import threshold from '@/assets/icons/threshold.svg?inline'
 import format from '@/assets/icons/format.svg?inline'
-import dingtalk from '@/assets/icons/dingtalk.svg'
+import dingtalk from '@/assets/icons/dingtalk.svg?inline'
 import mail from '@/assets/icons/mail.svg?inline'
 import sms from '@/assets/icons/sms.svg?inline'
 import message from '@/assets/icons/message.svg?inline'
@@ -60,6 +61,7 @@ import password from '@/assets/icons/password.svg?inline'
 
 export {
   alarm,
+  testalarm,
   analyse,
   flink,
   flinksql,

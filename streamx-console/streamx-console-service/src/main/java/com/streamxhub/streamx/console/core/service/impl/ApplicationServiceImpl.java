@@ -19,8 +19,8 @@
 
 package com.streamxhub.streamx.console.core.service.impl;
 
-import static com.streamxhub.streamx.console.core.task.K8sFlinkTrkMonitorWrapper.Bridge.toTrkId;
-import static com.streamxhub.streamx.console.core.task.K8sFlinkTrkMonitorWrapper.isKubernetesApp;
+import static com.streamxhub.streamx.console.core.task.K8sFlinkTrackMonitorWrapper.Bridge.toTrackId;
+import static com.streamxhub.streamx.console.core.task.K8sFlinkTrackMonitorWrapper.isKubernetesApp;
 
 import com.streamxhub.streamx.common.conf.ConfigConst;
 import com.streamxhub.streamx.common.conf.Workspace;
@@ -39,6 +39,7 @@ import com.streamxhub.streamx.common.util.Utils;
 import com.streamxhub.streamx.common.util.YarnUtils;
 import com.streamxhub.streamx.console.base.domain.Constant;
 import com.streamxhub.streamx.console.base.domain.RestRequest;
+import com.streamxhub.streamx.console.base.util.CommonUtils;
 import com.streamxhub.streamx.console.base.util.ObjectUtils;
 import com.streamxhub.streamx.console.base.util.SortUtils;
 import com.streamxhub.streamx.console.base.util.WebUtils;
@@ -77,10 +78,10 @@ import com.streamxhub.streamx.console.core.service.SavePointService;
 import com.streamxhub.streamx.console.core.service.SettingService;
 import com.streamxhub.streamx.console.core.task.FlinkTrackingTask;
 import com.streamxhub.streamx.flink.core.conf.ParameterCli;
-import com.streamxhub.streamx.flink.kubernetes.K8sFlinkTrkMonitor;
+import com.streamxhub.streamx.flink.kubernetes.IngressController;
+import com.streamxhub.streamx.flink.kubernetes.K8sFlinkTrackMonitor;
 import com.streamxhub.streamx.flink.kubernetes.model.FlinkMetricCV;
-import com.streamxhub.streamx.flink.kubernetes.model.TrkId;
-import com.streamxhub.streamx.flink.kubernetes.network.FlinkJobIngress;
+import com.streamxhub.streamx.flink.kubernetes.model.TrackId;
 import com.streamxhub.streamx.flink.packer.pipeline.BuildResult;
 import com.streamxhub.streamx.flink.packer.pipeline.DockerImageBuildResponse;
 import com.streamxhub.streamx.flink.packer.pipeline.ShadedBuildResponse;
@@ -115,6 +116,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.Serializable;
 import java.net.URI;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.Date;
 import java.util.HashMap;
@@ -193,7 +195,7 @@ public class ApplicationServiceImpl extends ServiceImpl<ApplicationMapper, Appli
     private EnvInitializer envInitializer;
 
     @Autowired
-    private K8sFlinkTrkMonitor k8sFlinkTrkMonitor;
+    private K8sFlinkTrackMonitor k8SFlinkTrackMonitor;
 
     @Autowired
     private AppBuildPipeService appBuildPipeService;
@@ -256,7 +258,7 @@ public class ApplicationServiceImpl extends ServiceImpl<ApplicationMapper, Appli
         }
 
         // merge metrics from flink kubernetes cluster
-        FlinkMetricCV k8sMetric = k8sFlinkTrkMonitor.getAccClusterMetrics();
+        FlinkMetricCV k8sMetric = k8SFlinkTrackMonitor.getAccClusterMetrics();
         totalJmMemory += k8sMetric.totalJmMemory();
         totalTmMemory += k8sMetric.totalTmMemory();
         totalTm += k8sMetric.totalTm();
@@ -386,7 +388,7 @@ public class ApplicationServiceImpl extends ServiceImpl<ApplicationMapper, Appli
             removeApp(application);
 
             if (isKubernetesApp(paramApp)) {
-                k8sFlinkTrkMonitor.unTrackingJob(toTrkId(paramApp));
+                k8SFlinkTrackMonitor.unTrackingJob(toTrackId(application));
             } else {
                 FlinkTrackingTask.stopTracking(paramApp.getId());
             }
@@ -442,6 +444,16 @@ public class ApplicationServiceImpl extends ServiceImpl<ApplicationMapper, Appli
     public IPage<Application> page(Application appParam, RestRequest request) {
         Page<Application> page = new Page<>();
         SortUtils.handlePageSort(request, page, "create_time", Constant.ORDER_DESC, false);
+        if (CommonUtils.notEmpty(appParam.getStateArray())) {
+            if (Arrays.stream(appParam.getStateArray()).anyMatch(x -> x == FlinkAppState.FINISHED.getValue())) {
+                Integer[] newArray = CommonUtils.arrayInsertIndex(
+                    appParam.getStateArray(),
+                    appParam.getStateArray().length,
+                    FlinkAppState.POS_TERMINATED.getValue()
+                );
+                appParam.setStateArray(newArray);
+            }
+        }
         this.baseMapper.page(page, appParam);
         //瞒天过海,暗度陈仓,偷天换日,鱼目混珠.
         List<Application> records = page.getRecords();
@@ -450,7 +462,7 @@ public class ApplicationServiceImpl extends ServiceImpl<ApplicationMapper, Appli
             // status of flink job on kubernetes mode had been automatically persisted to db in time.
             if (isKubernetesApp(record)) {
                 // set duration
-                String restUrl = k8sFlinkTrkMonitor.getRemoteRestUrl(toTrkId(record));
+                String restUrl = k8SFlinkTrackMonitor.getRemoteRestUrl(toTrackId(record));
                 record.setFlinkRestUrl(restUrl);
                 if (record.getTracking() == 1 && record.getStartTime() != null && record.getStartTime().getTime() > 0) {
                     record.setDuration(now - record.getStartTime().getTime());
@@ -518,7 +530,7 @@ public class ApplicationServiceImpl extends ServiceImpl<ApplicationMapper, Appli
                 }
                 // check whether clusterId, namespace, jobId on kubernetes
                 else if (ExecutionMode.isKubernetesMode(appParam.getExecutionMode())
-                    && k8sFlinkTrkMonitor.checkIsInRemoteCluster(toTrkId(appParam))) {
+                    && k8SFlinkTrackMonitor.checkIsInRemoteCluster(toTrackId(appParam))) {
                     return AppExistsState.IN_KUBERNETES;
                 }
             }
@@ -534,7 +546,7 @@ public class ApplicationServiceImpl extends ServiceImpl<ApplicationMapper, Appli
             }
             // check whether clusterId, namespace, jobId on kubernetes
             else if (ExecutionMode.isKubernetesMode(appParam.getExecutionMode())
-                && k8sFlinkTrkMonitor.checkIsInRemoteCluster(toTrkId(appParam))) {
+                && k8SFlinkTrackMonitor.checkIsInRemoteCluster(toTrackId(appParam))) {
                 return AppExistsState.IN_KUBERNETES;
             }
         }
@@ -835,7 +847,7 @@ public class ApplicationServiceImpl extends ServiceImpl<ApplicationMapper, Appli
         }
         // add flink web url info for k8s-mode
         if (isKubernetesApp(application)) {
-            String restUrl = k8sFlinkTrkMonitor.getRemoteRestUrl(toTrkId(application));
+            String restUrl = k8SFlinkTrackMonitor.getRemoteRestUrl(toTrackId(application));
             application.setFlinkRestUrl(restUrl);
 
             // set duration
@@ -884,7 +896,7 @@ public class ApplicationServiceImpl extends ServiceImpl<ApplicationMapper, Appli
         boolean mapping = this.baseMapper.mapping(appParam);
         Application application = getById(appParam.getId());
         if (isKubernetesApp(application)) {
-            k8sFlinkTrkMonitor.unTrackingJob(toTrkId(application));
+            k8SFlinkTrackMonitor.unTrackingJob(toTrackId(application));
         } else {
             FlinkTrackingTask.addTracking(application);
         }
@@ -996,9 +1008,9 @@ public class ApplicationServiceImpl extends ServiceImpl<ApplicationMapper, Appli
 
                     // retracking flink job on kubernetes and logging exception
                     if (isKubernetesApp(application)) {
-                        TrkId trkid = toTrkId(application);
-                        k8sFlinkTrkMonitor.unTrackingJob(trkid);
-                        k8sFlinkTrkMonitor.trackingJob(trkid);
+                        TrackId id = toTrackId(application);
+                        k8SFlinkTrackMonitor.unTrackingJob(id);
+                        k8SFlinkTrackMonitor.trackingJob(id);
                     } else {
                         FlinkTrackingTask.stopTracking(application.getId());
                     }
@@ -1191,6 +1203,19 @@ public class ApplicationServiceImpl extends ServiceImpl<ApplicationMapper, Appli
         BuildResult buildResult = buildPipeline.getBuildResult();
         if (executionMode.equals(ExecutionMode.YARN_APPLICATION)) {
             buildResult = new ShadedBuildResponse(null, flinkUserJar, true);
+        } else {
+            if (ExecutionMode.isKubernetesMode(application.getExecutionMode())) {
+                DockerImageBuildResponse result = buildResult.as(DockerImageBuildResponse.class);
+                String ingressTemplates = application.getIngressTemplate();
+                String domainName = application.getDefaultModeIngress();
+                if (StringUtils.isNotBlank(ingressTemplates)) {
+                    String ingressOutput = result.workspacePath() + "/ingress.yaml";
+                    IngressController.configureIngress(ingressOutput);
+                }
+                if (StringUtils.isNotBlank(domainName)) {
+                    IngressController.configureIngress(domainName, application.getClusterId(), application.getK8sNamespace());
+                }
+            }
         }
 
         SubmitRequest submitRequest = new SubmitRequest(
@@ -1211,18 +1236,6 @@ public class ApplicationServiceImpl extends ServiceImpl<ApplicationMapper, Appli
             kubernetesSubmitParam,
             extraParameter
         );
-
-        DockerImageBuildResponse result = buildResult.as(DockerImageBuildResponse.class);
-
-        String ingressTemplates = application.getIngressTemplate();
-        String domainName = application.getDefaultModeIngress();
-        if (StringUtils.isNotBlank(ingressTemplates)) {
-            String ingressOutput = result.workspacePath() + "/ingress.yaml";
-            FlinkJobIngress.configureIngress(ingressOutput);
-        }
-        if (StringUtils.isNotBlank(domainName)) {
-            FlinkJobIngress.configureIngress(domainName, application.getClusterId(), application.getK8sNamespace());
-        }
 
         CompletableFuture<SubmitResponse> future = CompletableFuture.supplyAsync(() -> FlinkSubmitter.submit(submitRequest), executorService);
 
@@ -1258,7 +1271,7 @@ public class ApplicationServiceImpl extends ServiceImpl<ApplicationMapper, Appli
 
                 //2) 启动完成将任务加入到监控中...
                 if (isKubernetesApp(application)) {
-                    k8sFlinkTrkMonitor.trackingJob(toTrkId(application));
+                    k8SFlinkTrackMonitor.trackingJob(toTrackId(application));
                 } else {
                     FlinkTrackingTask.setOptionState(appParam.getId(), OptionState.STARTING);
                     FlinkTrackingTask.addTracking(application);
@@ -1281,7 +1294,7 @@ public class ApplicationServiceImpl extends ServiceImpl<ApplicationMapper, Appli
                     app.setOptionState(OptionState.NONE.getValue());
                     updateById(app);
                     if (isKubernetesApp(app)) {
-                        k8sFlinkTrkMonitor.unTrackingJob(toTrkId(app));
+                        k8SFlinkTrackMonitor.unTrackingJob(toTrackId(app));
                     } else {
                         FlinkTrackingTask.stopTracking(appParam.getId());
                     }
@@ -1303,9 +1316,9 @@ public class ApplicationServiceImpl extends ServiceImpl<ApplicationMapper, Appli
         savePointService.obsolete(application.getId());
         // retracking flink job on kubernetes and logging exception
         if (isKubernetesApp(application)) {
-            TrkId trkid = toTrkId(application);
-            k8sFlinkTrkMonitor.unTrackingJob(trkid);
-            k8sFlinkTrkMonitor.trackingJob(trkid);
+            TrackId id = toTrackId(application);
+            k8SFlinkTrackMonitor.unTrackingJob(id);
+            k8SFlinkTrackMonitor.trackingJob(id);
         } else {
             FlinkTrackingTask.stopTracking(application.getId());
         }
@@ -1320,19 +1333,16 @@ public class ApplicationServiceImpl extends ServiceImpl<ApplicationMapper, Appli
 
     private String getSavePointPath(Application appParam) throws Exception {
         Application application = getById(appParam.getId());
+
+        //1) 动态参数优先级最高,读取动态参数中是否设置: -Dstate.savepoints.dir
         String savepointPath = FlinkSubmitter
             .extractDynamicOptionAsJava(application.getDynamicOptions())
             .get(ConfigConst.KEY_FLINK_STATE_SAVEPOINTS_DIR().substring(6));
 
+        // 2) Application conf配置优先级第二,如果是 streamx|flinksql 类型的任务,则看任务定义时是否配置了Application conf,
+        // 如配置了并开启了checkpoints则读取state.savepoints.dir
         if (StringUtils.isBlank(savepointPath)) {
-            if (ExecutionMode.isRemoteMode(application.getExecutionMode())) {
-                FlinkCluster cluster = flinkClusterService.getById(application.getFlinkClusterId());
-                assert cluster != null;
-                Map<String, String> config = cluster.getFlinkConfig();
-                if (!config.isEmpty()) {
-                    savepointPath = config.get(ConfigConst.KEY_FLINK_STATE_SAVEPOINTS_DIR().substring(6));
-                }
-            } else if (application.isStreamXJob() || application.isFlinkSqlJob()) {
+            if (application.isStreamXJob() || application.isFlinkSqlJob()) {
                 ApplicationConfig applicationConfig = configService.getEffective(application.getId());
                 if (applicationConfig != null) {
                     Map<String, String> map = applicationConfig.readConfig();
@@ -1341,11 +1351,26 @@ public class ApplicationServiceImpl extends ServiceImpl<ApplicationMapper, Appli
                         savepointPath = map.get(ConfigConst.KEY_FLINK_STATE_SAVEPOINTS_DIR());
                     }
                 }
+            }
+        }
+
+        // 3) 以上都未获取到savepoint, 则按照部署类型来尝试获取savepoint路径(remote|on yarn)
+        if (StringUtils.isBlank(savepointPath)) {
+            // 3.1) 如果是remote模式,则通过restapi请求flink webui接口,获取savepoint路径
+            if (ExecutionMode.isRemoteMode(application.getExecutionMode())) {
+                FlinkCluster cluster = flinkClusterService.getById(application.getFlinkClusterId());
+                assert cluster != null;
+                Map<String, String> config = cluster.getFlinkConfig();
+                if (!config.isEmpty()) {
+                    savepointPath = config.get(ConfigConst.KEY_FLINK_STATE_SAVEPOINTS_DIR().substring(6));
+                }
             } else if (ExecutionMode.isYarnMode(application.getExecutionMode())) {
+                // 3.2) 如是 on yarn模式. 则读取绑定的flink里的flink-conf.yml中的savepoint
                 FlinkEnv flinkEnv = flinkEnvService.getById(application.getVersionId());
                 savepointPath = flinkEnv.convertFlinkYamlAsMap().get(ConfigConst.KEY_FLINK_STATE_SAVEPOINTS_DIR().substring(6));
             }
         }
+
         return savepointPath;
     }
 
