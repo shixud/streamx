@@ -41,46 +41,32 @@ class FlinkK8sEventWatcher(implicit trackController: FlinkTrackController) exten
 
   private var k8sClient: KubernetesClient = _
 
-  // status of whether FlinkK8sEventWatcher has already started
-  @volatile private var isStarted = false
-
   /**
    * start watcher process
    */
-  override def start(): Unit = this.synchronized {
-    if (!isStarted) {
-      k8sClient = Try(KubernetesRetriever.newK8sClient()).getOrElse {
-        logError("[flink-k8s] FlinkK8sEventWatcher fails to start.")
-        return
-      }
-      watch()
-      isStarted = true
-      logInfo("[flink-k8s] FlinkK8sEventWatcher started.")
+  override def doStart(): Unit = {
+    k8sClient = Try(KubernetesRetriever.newK8sClient()).getOrElse {
+      logError("[flink-k8s] FlinkK8sEventWatcher fails to start.")
+      return
     }
+    doWatch()
+    logInfo("[flink-k8s] FlinkK8sEventWatcher started.")
   }
 
   /**
    * stop watcher process
    */
-  override def stop(): Unit = this.synchronized {
-    if (isStarted) {
-      k8sClient.close()
-      k8sClient = null
-      isStarted = false
-      logInfo("[flink-k8s] FlinkK8sEventWatcher stopped.")
-    }
+  override def doStop(): Unit = {
+    k8sClient.close()
+    k8sClient = null
+    logInfo("[flink-k8s] FlinkK8sEventWatcher stopped.")
   }
 
-  override def close(): Unit = this.synchronized {
-    if (isStarted) {
-      k8sClient.close()
-      k8sClient = null
-      isStarted = false
-      logInfo("[flink-k8s] FlinkK8sEventWatcher closed.")
-    }
+  override def doClose(): Unit = {
+    logInfo("[flink-k8s] FlinkK8sEventWatcher closed.")
   }
 
-  override def watch(): Unit = {
+  override def doWatch(): Unit = {
     // watch k8s deployment events
     k8sClient.apps().deployments()
       .withLabel("type", "flink-native-kubernetes")
@@ -102,6 +88,5 @@ class FlinkK8sEventWatcher(implicit trackController: FlinkTrackController) exten
       K8sDeploymentEventCV(action, event, System.currentTimeMillis())
     )
   }
-
 
 }

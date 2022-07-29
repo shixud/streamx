@@ -40,7 +40,6 @@ import scala.util.{Failure, Success, Try}
 /**
  * author:Al-assad
  */
-//noinspection DuplicatedCode
 @ThreadSafe
 class FlinkMetricWatcher(conf: MetricWatcherConfig = MetricWatcherConfig.defaultConf)
                         (implicit val trackController: FlinkTrackController,
@@ -53,59 +52,44 @@ class FlinkMetricWatcher(conf: MetricWatcherConfig = MetricWatcherConfig.default
   private val timerExec = Executors.newSingleThreadScheduledExecutor()
   private var timerSchedule: ScheduledFuture[_] = _
 
-  // status of whether FlinkJobWatcher has already started
-  @volatile private var isStarted = false
-
   /**
    * start watcher process
    */
-  // noinspection DuplicatedCode
-  override def start(): Unit = this.synchronized {
-    if (!isStarted) {
-      timerSchedule = timerExec.scheduleAtFixedRate(() => watch(), 0, conf.requestIntervalSec, TimeUnit.SECONDS)
-      isStarted = true
-      logInfo("[flink-k8s] FlinkMetricWatcher started.")
-    }
+  override def doStart(): Unit = {
+    timerSchedule = timerExec.scheduleAtFixedRate(() => doWatch(), 0, conf.requestIntervalSec, TimeUnit.SECONDS)
+    logInfo("[flink-k8s] FlinkMetricWatcher started.")
   }
 
   /**
    * stop watcher process
    */
-  override def stop(): Unit = this.synchronized {
-    if (isStarted) {
-      timerSchedule.cancel(true)
-      isStarted = false
-      logInfo("[flink-k8s] FlinkMetricWatcher stopped.")
-    }
+  override def doStop(): Unit = {
+    timerSchedule.cancel(true)
+    logInfo("[flink-k8s] FlinkMetricWatcher stopped.")
   }
 
   /**
    * closes resource, relinquishing any underlying resources.
    */
-  // noinspection DuplicatedCode
-  override def close(): Unit = this.synchronized {
-    if (isStarted) {
-      timerSchedule.cancel(true)
-      isStarted = false
-    }
-    Try(timerExec.shutdownNow())
-    Try(trackTaskExecutor.shutdownNow())
+  override def doClose(): Unit = {
+    timerExec.shutdownNow()
+    trackTaskExecutor.shutdownNow()
     logInfo("[flink-k8s] FlinkMetricWatcher closed.")
   }
 
   /**
    * single flink metrics tracking task
    */
-  override def watch(): Unit = {
+  override def doWatch(): Unit = {
     // get all legal tracking cluster key
     val trackIds: Set[TrackId] = Try(trackController.collectTracks()).filter(_.nonEmpty).getOrElse(return)
     // retrieve flink metrics in thread pool
-    val futures: Set[Future[Option[(ClusterKey, FlinkMetricCV)]]] =
+    val futures: Set[Future[Option[FlinkMetricCV]]] =
       trackIds.map(id => {
         val future = Future(collectMetrics(id))
-        future.filter(_.nonEmpty).foreach {
-          result =>
-            val (clusterKey, metric) = result.get._1 -> result.get._2
+        future onComplete (_.getOrElse(None) match {
+          case Some(metric) =>
+            val clusterKey = id.toClusterKey
             // update current flink cluster metrics on cache
             trackController.flinkMetrics.put(clusterKey, metric)
             val isMetricChanged = {
@@ -115,14 +99,13 @@ class FlinkMetricWatcher(conf: MetricWatcherConfig = MetricWatcherConfig.default
             if (isMetricChanged) {
               eventBus.postAsync(FlinkClusterMetricChangeEvent(id, metric))
             }
-        }
+          case _ =>
+        })
         future
       })
     // blocking until all future are completed or timeout is reached
-    Try {
-      val futureHold = Future.sequence(futures)
-      Await.ready(futureHold, conf.requestTimeoutSec seconds)
-    }.failed.map { _ =>
+    Try(Await.ready(Future.sequence(futures), conf.requestTimeoutSec seconds))
+      .failed.map { _ =>
       logError(s"[FlinkMetricWatcher] tracking flink metrics on kubernetes mode timeout," +
         s" limitSeconds=${conf.requestTimeoutSec}," +
         s" trackingClusterKeys=${trackIds.mkString(",")}")
@@ -137,7 +120,7 @@ class FlinkMetricWatcher(conf: MetricWatcherConfig = MetricWatcherConfig.default
    * This method can be called directly from outside, without affecting the
    * current cachePool result.
    */
-  def collectMetrics(id: TrackId): Option[(ClusterKey, FlinkMetricCV)] = {
+  def collectMetrics(id: TrackId): Option[FlinkMetricCV] = {
     // get flink rest api
     val clusterKey: ClusterKey = ClusterKey.of(id)
     val flinkJmRestUrl = trackController.getClusterRestUrl(clusterKey).filter(_.nonEmpty).getOrElse(return None)
@@ -177,7 +160,7 @@ class FlinkMetricWatcher(conf: MetricWatcherConfig = MetricWatcherConfig.default
         failedJob = flinkOverview.jobsFailed,
         pollAckTime = ackTime)
     }
-    Some(clusterKey -> flinkMetricCV)
+    Some(flinkMetricCV)
   }
 
 }

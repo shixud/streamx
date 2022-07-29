@@ -40,7 +40,6 @@ import scala.util.{Failure, Success, Try}
 /**
  * author: benjobs
  */
-
 @ThreadSafe
 class FlinkCheckpointWatcher(conf: MetricWatcherConfig = MetricWatcherConfig.defaultConf)
                             (implicit val trackController: FlinkTrackController,
@@ -52,66 +51,51 @@ class FlinkCheckpointWatcher(conf: MetricWatcherConfig = MetricWatcherConfig.def
   private val timerExec = Executors.newSingleThreadScheduledExecutor()
   private var timerSchedule: ScheduledFuture[_] = _
 
-  // status of whether FlinkJobWatcher has already started
-  @volatile private var isStarted = false
-
   /**
    * start watcher process
    */
-  // noinspection DuplicatedCode
-  override def start(): Unit = this.synchronized {
-    if (!isStarted) {
-      timerSchedule = timerExec.scheduleAtFixedRate(() => watch(), 0, conf.requestIntervalSec, TimeUnit.SECONDS)
-      isStarted = true
-      logInfo("[flink-k8s] FlinkCheckpointWatcher started.")
-    }
+  override def doStart(): Unit = {
+    timerSchedule = timerExec.scheduleAtFixedRate(() => doWatch(), 0, conf.requestIntervalSec, TimeUnit.SECONDS)
+    logInfo("[flink-k8s] FlinkCheckpointWatcher started.")
   }
 
   /**
    * stop watcher process
    */
-  override def stop(): Unit = this.synchronized {
-    if (isStarted) {
-      timerSchedule.cancel(true)
-      isStarted = false
-      logInfo("[flink-k8s] FlinkCheckpointWatcher stopped.")
-    }
+  override def doStop(): Unit = {
+    timerSchedule.cancel(true)
+    logInfo("[flink-k8s] FlinkCheckpointWatcher stopped.")
   }
 
   /**
    * closes resource, relinquishing any underlying resources.
    */
-  // noinspection DuplicatedCode
-  override def close(): Unit = this.synchronized {
-    if (isStarted) {
-      timerSchedule.cancel(true)
-      isStarted = false
-    }
-    Try(timerExec.shutdownNow())
-    Try(trackTaskExecutor.shutdownNow())
+  override def doClose(): Unit = {
+    timerExec.shutdownNow()
+    trackTaskExecutor.shutdownNow()
     logInfo("[flink-k8s] FlinkCheckpointWatcher closed.")
   }
 
   /**
    * single flink metrics tracking task
    */
-  override def watch(): Unit = {
+  override def doWatch(): Unit = {
     // get all legal tracking cluster key
     val trackIds: Set[TrackId] = Try(trackController.collectTracks()).filter(_.nonEmpty).getOrElse(return)
     // retrieve flink metrics in thread pool
     val futures: Set[Future[Option[CheckpointCV]]] =
       trackIds.map(id => {
         val future = Future(collect(id))
-        future.filter(_.nonEmpty).foreach {
-          result => eventBus.postAsync(FlinkJobCheckpointChangeEvent(id, result.get))
-        }
+        future onComplete (_.getOrElse(None) match {
+          case Some(cp) => eventBus.postAsync(FlinkJobCheckpointChangeEvent(id, cp))
+          case _ =>
+        })
         future
       })
+
     // blocking until all future are completed or timeout is reached
-    Try {
-      val futureHold = Future.sequence(futures)
-      Await.ready(futureHold, conf.requestTimeoutSec seconds)
-    }.failed.map { _ =>
+    Try(Await.ready(Future.sequence(futures), conf.requestTimeoutSec seconds))
+      .failed.map { _ =>
       logError(s"[FlinkCheckpointWatcher] tracking flink-job checkpoint on kubernetes mode timeout," +
         s" limitSeconds=${conf.requestTimeoutSec}," +
         s" trackingClusterKeys=${trackIds.mkString(",")}")
@@ -189,5 +173,3 @@ object Checkpoint {
   }
 
 }
-
-

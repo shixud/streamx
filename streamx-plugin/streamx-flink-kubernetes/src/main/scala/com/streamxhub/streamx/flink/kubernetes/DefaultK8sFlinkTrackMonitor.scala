@@ -69,7 +69,7 @@ class DefaultK8sFlinkTrackMonitor(conf: FlinkTrackConfig = FlinkTrackConfig.defa
   }
 
   def trackingJob(trackId: TrackId): Unit = {
-    if (!Try(trackId.nonLegal).getOrElse(true)) {
+    if (trackId.isLegal) {
       trackController.trackIds.set(trackId)
     }
   }
@@ -93,17 +93,13 @@ class DefaultK8sFlinkTrackMonitor(conf: FlinkTrackConfig = FlinkTrackConfig.defa
   override def getAllTrackingIds: Set[TrackId] = trackController.collectAllTrackIds()
 
   override def checkIsInRemoteCluster(trackId: TrackId): Boolean = {
-    if (Try(trackId.nonLegal).getOrElse(true)) false; else {
+    if (!trackId.isLegal) false; else {
       val nonLost = (state: FlinkJobState.Value) => state != FlinkJobState.LOST || state != FlinkJobState.SILENT
       trackId.executeMode match {
         case SESSION =>
-          jobStatusWatcher
-            .touchSessionJob(trackId.clusterId, trackId.namespace, trackId.appId, trackId.jobId)
-            .exists(e => nonLost(e._2.jobState))
+          jobStatusWatcher.touchSessionJob(trackId).exists(e => nonLost(e.jobState))
         case APPLICATION =>
-          jobStatusWatcher
-            .touchApplicationJob(trackId.clusterId, trackId.namespace, trackId.appId)
-            .exists(e => nonLost(e._2.jobState))
+          jobStatusWatcher.touchApplicationJob(trackId).exists(e => nonLost(e.jobState))
         case _ => false
       }
     }
@@ -130,10 +126,10 @@ class DefaultK8sFlinkTrackMonitor(conf: FlinkTrackConfig = FlinkTrackConfig.defa
      */
     // noinspection UnstableApiUsage
     @Subscribe def subscribeFlinkJobStateEvent(event: FlinkJobStateEvent): Unit = {
-      if (!Try(event.trackId.nonLegal).getOrElse(true)) {
-        val preCache = trackController.jobStatuses.get(event.trackId)
+      if (event.trackId.isLegal) {
+        val latest = trackController.jobStatuses.get(event.trackId)
         // determine if the current event should be ignored
-        val shouldIgnore: Boolean = (preCache, event) match {
+        val shouldIgnore: Boolean = (latest, event) match {
           case (preCache, _) if preCache == null => false
           // discard current event when the job state is consistent
           case (preCache, event) if preCache.jobState == event.jobState => true
@@ -144,8 +140,8 @@ class DefaultK8sFlinkTrackMonitor(conf: FlinkTrackConfig = FlinkTrackConfig.defa
         if (!shouldIgnore) {
           // update relevant cache
           val newCache = {
-            if (preCache != null) {
-              preCache.copy(jobState = event.jobState)
+            if (latest != null) {
+              latest.copy(jobState = event.jobState)
             } else {
               JobStatusCV(
                 jobState = event.jobState,
